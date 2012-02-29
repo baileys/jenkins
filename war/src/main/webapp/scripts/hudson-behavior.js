@@ -501,7 +501,7 @@ function sequencer(fs) {
     return next();
 }
 
-var hudsonRules = {
+var jenkinsRules = {
     "BODY" : function() {
         tooltip = new YAHOO.widget.Tooltip("tt", {context:[], zindex:999});
     },
@@ -586,6 +586,72 @@ var hudsonRules = {
             if(href!=null)      window.location = href;
         }
         e = null; // avoid memory leak
+    },
+
+    "INPUT.applyButton":function (e) {
+        var id;
+        var containerId = "container"+(iota++);
+
+        var responseDialog = new YAHOO.widget.Panel("wait"+(iota++), {
+            fixedcenter:true,
+            close:true,
+            draggable:true,
+            zindex:4,
+            modal:true,
+            visible:false
+        });
+
+        responseDialog.setHeader("Error");
+        responseDialog.setBody("<div id='"+containerId+"'></iframe>");
+        responseDialog.render(document.body);
+        var target; // iframe
+
+        function attachIframeOnload(target, f) {
+            if (target.attachEvent) {
+                target.attachEvent("onload", f);
+            } else {
+                target.onload = f;
+            }
+        }
+
+        makeButton(e,function (e) {
+            var f = findAncestor(e.target, "FORM");
+
+            // create a throw-away IFRAME to avoid back button from loading the POST result back
+            id = "iframe"+(iota++);
+            target = document.createElement("iframe");
+            target.setAttribute("id",id);
+            target.setAttribute("name",id);
+            target.setAttribute("style","height:100%; width:100%");
+            $(containerId).appendChild(target);
+
+            attachIframeOnload(target, function () {
+                if (target.contentWindow && target.contentWindow.applyCompletionHandler) {
+                    // apply-aware server is expected to set this handler
+                    target.contentWindow.applyCompletionHandler(window);
+                } else {
+                    // otherwise this is possibly an error from the server, so we need to render the whole content.
+                    var r = YAHOO.util.Dom.getClientRegion();
+                    responseDialog.cfg.setProperty("width",r.width*3/4+"px");
+                    responseDialog.cfg.setProperty("height",r.height*3/4+"px");
+                    responseDialog.center();
+                    responseDialog.show();
+                }
+                window.setTimeout(function() {// otherwise Firefox will fail to leave the "connecting" state
+                    $(id).remove();
+                },0)
+            });
+
+            f.target = target.id;
+            f.elements['core:apply'].value = "true";
+            try {
+                buildFormTree(f);
+                f.submit();
+            } finally {
+                f.elements['core:apply'].value = null;
+                f.target = null;
+            }
+        });
     },
 
     "INPUT.advancedButton" : function(e) {
@@ -715,7 +781,8 @@ var hudsonRules = {
                 new Ajax.Request(this.getAttribute("helpURL"), {
                     method : 'get',
                     onSuccess : function(x) {
-                        div.innerHTML = x.responseText;
+                        var from = x.getResponseHeader("X-Plugin-From");
+                        div.innerHTML = x.responseText+(from?"<div class='from-plugin'>"+from+"</div>":"");
                         layoutUpdateCallback.call();
                     },
                     onFailure : function(x) {
@@ -1063,7 +1130,7 @@ var hudsonRules = {
              */
             eachRow : function(recursive,f) {
                 if (recursive) {
-                    for (var e=this.start; e!=this.end; e=e.nextSibling)
+                    for (var e=this.start; e!=this.end; e=$(e).next())
                         f(e);
                 } else {
                     throw "not implemented yet";
@@ -1345,7 +1412,14 @@ var hudsonRules = {
         layoutUpdateCallback.add(adjustSticker);
     },
 
-    "#top-sticker" : function(sticker) {
+    "#top-sticker" : function(sticker) {// legacy
+        this[".top-sticker"](sticker);
+    },
+
+    /**
+     * @param {HTMLElement} sticker
+     */
+    ".top-sticker" : function(sticker) {
         var DOM = YAHOO.util.Dom;
 
         var shadow = document.createElement("div");
@@ -1353,7 +1427,7 @@ var hudsonRules = {
 
         var edge = document.createElement("div");
         edge.className = "top-sticker-edge";
-        sticker.insertBefore(edge);
+        sticker.insertBefore(edge,sticker.firstChild);
 
         function adjustSticker() {
             shadow.style.height = sticker.offsetHeight + "px";
@@ -1374,6 +1448,7 @@ var hudsonRules = {
         adjustSticker();
     }
 };
+var hudsonRules = jenkinsRules; // legacy name
 
 function applyTooltip(e,text) {
         // copied from YAHOO.widget.Tooltip.prototype.configContext to efficiently add a new element
@@ -1419,7 +1494,7 @@ function refillOnChange(e,onChange) {
                 if (window.YUI!=null)      YUI.log("Unable to find a nearby control of the name "+name,"warn")
                 return;
             }
-            try { c.addEventListener("change",h,false); } catch (ex) { c.attachEvent("onchange",h); }
+            $(c).observe("change",h);
             deps.push({name:Path.tail(name),control:c});
         });
     }
@@ -1623,7 +1698,7 @@ function refreshPart(id,url) {
                 var div = document.createElement('div');
                 div.innerHTML = rsp.responseText;
 
-                var node = div.firstChild;
+                var node = $(div).firstDescendant();
                 p.insertBefore(node, next);
 
                 Behaviour.applySubtree(node);
@@ -1842,7 +1917,7 @@ function updateBuildHistory(ajaxUrl,nBuild) {
                 Behaviour.applySubtree(div);
 
                 var pivot = rows[0];
-                var newRows = div.firstChild.rows;
+                var newRows = $(div).firstDescendant().rows;
                 for (var i = newRows.length - 1; i >= 0; i--) {
                     pivot.parentNode.insertBefore(newRows[i], pivot.nextSibling);
                 }
@@ -1917,6 +1992,7 @@ function createSearchBox(searchURL) {
     };
     var ac = new YAHOO.widget.AutoComplete("search-box","search-box-completion",ds);
     ac.typeAhead = false;
+    ac.autoHighlight = false;
 
     var box   = $("search-box");
     var sizer = $("search-box-sizer");
@@ -2401,7 +2477,7 @@ var downloadService = {
     }
 };
 
-// update center service. to remain compatible with earlier version of Hudson, aliased.
+// update center service. to remain compatible with earlier version of Jenkins, aliased.
 var updateCenter = downloadService;
 
 /*
@@ -2540,3 +2616,84 @@ var layoutUpdateCallback = {
             this.callbacks[i]();
     }
 }
+
+// Notification bar
+// ==============================
+// this control displays a single line message at the top of the page, like StackOverflow does
+// see ui-samples for more details
+var notificationBar = {
+    OPACITY : 0.8,
+    DELAY : 3000,   // milliseconds to auto-close the notification
+    div : null,     // the main 'notification-bar' DIV
+    token : null,   // timer for cancelling auto-close
+
+    OK : {// standard option values for typical OK notification
+        icon: "accept.png",
+        backgroundColor: "#8ae234"
+    },
+    WARNING : {// likewise, for warning
+        icon: "yellow.png",
+        backgroundColor: "#fce94f"
+    },
+    ERROR : {// likewise, for error
+        icon: "red.png",
+        backgroundColor: "#ef2929",
+        sticky: true
+    },
+
+    init : function() {
+        if (this.div==null) {
+            this.div = document.createElement("div");
+            YAHOO.util.Dom.setStyle(this.div,"opacity",0);
+            this.div.id="notification-bar";
+            this.div.style.backgroundColor="#fff";
+            document.body.insertBefore(this.div, document.body.firstChild);
+
+            var self = this;
+            this.div.onclick = function() {
+                self.hide();
+            };
+        }
+    },
+    // cancel pending auto-hide timeout
+    clearTimeout : function() {
+        if (this.token)
+            window.clearTimeout(this.token);
+        this.token = null;
+    },
+    // hide the current notification bar, if it's displayed
+    hide : function () {
+        this.clearTimeout();
+        var self = this;
+        var out = new YAHOO.util.ColorAnim(this.div, {
+            opacity: { to:0 },
+            backgroundColor: {to:"#fff"}
+        }, 0.3, YAHOO.util.Easing.easeIn);
+        out.onComplete.subscribe(function() {
+            self.div.style.display = "none";
+        })
+        out.animate();
+    },
+    // show a notification bar
+    show : function (text,options) {
+        options = options || {}
+
+        this.init();
+        this.div.style.height = this.div.style.lineHeight = options.height || "40px";
+        this.div.style.display = "block";
+
+        if (options.icon)
+            text = "<img src='"+rootURL+"/images/24x24/"+options.icon+"'> "+text;
+        this.div.innerHTML = text;
+
+        new YAHOO.util.ColorAnim(this.div, {
+            opacity: { to:this.OPACITY },
+            backgroundColor : { to: options.backgroundColor || "#fff" }
+        }, 1, YAHOO.util.Easing.easeOut).animate();
+
+        this.clearTimeout();
+        var self = this;
+        if (!options.sticky)
+            this.token = window.setTimeout(function(){self.hide();},this.DELAY);
+    }
+};
